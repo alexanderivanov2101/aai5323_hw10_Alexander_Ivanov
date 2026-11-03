@@ -1,0 +1,407 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "a363c94f",
+   "metadata": {},
+   "source": [
+    "# Homework 10: Fairness EDA of the Communities and Crime Dataset\n",
+    "### DSA4970/5970\n",
+    "### \\<your name here\\>\n",
+    "\n",
+    "In this assignment, you will perform a fairness exploratory data analysis on the Communities and Crime dataset, located in the UCI Machine Learning Repository.  You can find the location and documentation of the dataset here:  https://archive.ics.uci.edu/dataset/183/communities+and+crime.  \n",
+    "\n",
+    "Using the notebook from class as a guide, conduct a full EDA on the dataset.  Then answer the questions in the markdown sections at the bottom of this notebook skeleton.  Run your entire notebook and save it.  Then upload it to the assignment page for lesson 10.\n",
+    "\n",
+    "__This assignment is worth 200 points in total.__"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9e371898",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "ucimlrepo is already installed.\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Check for the UCI Machine Learning Repository package and install if not present\n",
+    "import importlib\n",
+    "import subprocess\n",
+    "import sys\n",
+    "import seaborn as sns\n",
+    "import matplotlib.pyplot as plt\n",
+    "from scipy import stats\n",
+    "import statsmodels.api as sm\n",
+    "from sklearn.linear_model import LogisticRegression\n",
+    "\n",
+    "def ensure_ucimlrepo():\n",
+    "    try:\n",
+    "        importlib.import_module(\"ucimlrepo\")\n",
+    "        print(\"ucimlrepo is already installed.\")\n",
+    "    except ImportError:\n",
+    "        print(\"ucimlrepo not found. Installing...\")\n",
+    "        subprocess.check_call([sys.executable, \"-m\", \"pip\", \"install\", \"ucimlrepo\"])\n",
+    "        print(\"ucimlrepo installed successfully.\")\n",
+    "\n",
+    "ensure_ucimlrepo()\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c579f4eb",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "   state county  racepctblack  racePctWhite  racePctAsian  racePctHisp  \\\n",
+      "0      8    NaN          0.02          0.90          0.12         0.17   \n",
+      "1     53    NaN          0.12          0.74          0.45         0.07   \n",
+      "2     24    NaN          0.49          0.56          0.17         0.04   \n",
+      "3     34      5          1.00          0.08          0.12         0.10   \n",
+      "4     42     95          0.02          0.95          0.09         0.05   \n",
+      "\n",
+      "   medIncome  MedRent  PctUnemployed  PctNotHSGrad  PctForeignBorn  \\\n",
+      "0       0.37     0.34           0.27          0.18            0.12   \n",
+      "1       0.31     0.37           0.27          0.24            0.21   \n",
+      "2       0.30     0.31           0.36          0.43            0.14   \n",
+      "3       0.58     0.89           0.33          0.25            0.19   \n",
+      "4       0.50     0.38           0.12          0.30            0.11   \n",
+      "\n",
+      "  PolicPerPop  ViolentCrimesPerPop  \n",
+      "0        0.13                 0.20  \n",
+      "1         NaN                 0.67  \n",
+      "2         NaN                 0.43  \n",
+      "3         NaN                 0.12  \n",
+      "4         NaN                 0.03  \n",
+      "(1994, 13)\n"
+     ]
+    }
+   ],
+   "source": [
+    "# ---------------------------------------------------------\n",
+    "# Load Communities & Crime dataset from UCI ML Repository\n",
+    "# ---------------------------------------------------------\n",
+    "\n",
+    "import pandas as pd\n",
+    "import numpy as np\n",
+    "from ucimlrepo import fetch_ucirepo\n",
+    "\n",
+    "# Load dataset\n",
+    "communities = fetch_ucirepo(id=183)\n",
+    "\n",
+    "# Extract the main dataframe\n",
+    "df = communities.data.original\n",
+    "\n",
+    "# ---------------------------------------------------------\n",
+    "# Select subset of variables\n",
+    "# ---------------------------------------------------------\n",
+    "\n",
+    "fairness_vars = [\n",
+    "    # Location\n",
+    "    \"state\",\n",
+    "    \"county\",\n",
+    "\n",
+    "    # Demographics / protected-attribute-adjacent\n",
+    "    \"racepctblack\",\n",
+    "    \"racePctWhite\",\n",
+    "    \"racePctAsian\",\n",
+    "    \"racePctHisp\",\n",
+    "\n",
+    "    # Socioeconomic structure\n",
+    "    \"medIncome\",\n",
+    "    \"MedRent\",\n",
+    "    \"PctUnemployed\",\n",
+    "    \"PctNotHSGrad\",\n",
+    "\n",
+    "    # Housing / neighborhood structure\n",
+    "    \"PctForeignBorn\",\n",
+    "\n",
+    "    # Policing intensity\n",
+    "    \"PolicPerPop\",\n",
+    "\n",
+    "    # Crime outcomes\n",
+    "    \"ViolentCrimesPerPop\",\n",
+    "\n",
+    "]\n",
+    "\n",
+    "# Keep only the fairness variables\n",
+    "df_fairness = df[fairness_vars].copy()\n",
+    "\n",
+    "# Set up lists of dimensions\n",
+    "geoglist = ['state', 'county']\n",
+    "senslist = ['racepctblack', 'racePctWhite', 'racePctAsian', 'racePctHisp']\n",
+    "\n",
+    "# Set up a list of measurements\n",
+    "dfcols = df_fairness.columns.tolist()\n",
+    "measures = [col for col in dfcols if (col not in senslist and col not in geoglist)]\n",
+    "\n",
+    "# Replace \"?\" with actual NaN values\n",
+    "df_fairness['county'] = df_fairness['county'].apply(pd.to_numeric, errors='coerce').astype('Int64')\n",
+    "df_fairness[measures] = df_fairness[measures].apply(pd.to_numeric, errors='coerce')\n",
+    "\n",
+    "# Preview\n",
+    "print(df_fairness.head())\n",
+    "print(df_fairness.shape)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4f806d79",
+   "metadata": {},
+   "source": [
+    "#### Code (60 points)\n",
+    "Build your fairness EDA by adding code blocks to the notebook below this markdown section. Run all the relevant analyses.  Use the instructional_eda.ipynb notebook as a guide. Run your entire script to produce the outputs."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c402ba7b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\"\"\"\n",
+    "Determine descriptive statistics for the sensitive attributes\n",
+    "\n",
+    "Start by checking the descriptive statistics for the sensitive attributes.  You will see the variation\n",
+    "in the racial composition of the communities in the dataset.  Next, create a new column called 'majority_group'\n",
+    "that identifies the majority racial group in each community.  Use this categorical variable instead of the racial\n",
+    "percentages in your further analyses unless otherwise stated.\n",
+    "\n",
+    "Some hints:\n",
+    "+ The measurement variables are all continuous.  So what test should you use when comparing distributions across groups?\n",
+    "+ You need to conduct significance tests for each pair of groups values.\n",
+    "+ You will need to use the Bonferroni correction to adjust for multiple distribution comparisons.  How many comparisons are you making?\n",
+    "\n",
+    "\"\"\" \n",
+    "\n",
+    "# Begin your code here\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "635a2d59",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 1. Descriptive statistics for the sensitive attributes\n",
+    "from itertools import combinations\n",
+    "display(df_fairness[senslist].describe().round(3))\n",
+    "\n",
+    "# Majority group = race with the largest share in each community\n",
+    "df_fairness['majority_group'] = df_fairness[senslist].idxmax(axis=1).map(\n",
+    "    {'racepctblack': 'Black', 'racePctWhite': 'White',\n",
+    "     'racePctAsian': 'Asian', 'racePctHisp': 'Hispanic'})\n",
+    "print(df_fairness['majority_group'].value_counts())\n",
+    "\n",
+    "# Distributions of each measure by majority group\n",
+    "for m in measures:\n",
+    "    plt.figure(figsize=(6, 3))\n",
+    "    sns.kdeplot(data=df_fairness, x=m, hue='majority_group', common_norm=False)\n",
+    "    plt.title(m); plt.show()\n",
+    "display(df_fairness.groupby('majority_group')[measures].mean().round(3))\n",
+    "\n",
+    "# 2. Pairwise K-S tests (continuous measures) with Bonferroni correction\n",
+    "groups = sorted(df_fairness['majority_group'].unique())\n",
+    "pairs = list(combinations(groups, 2))\n",
+    "n_comp = len(pairs) * len(measures)\n",
+    "alpha = 0.05 / n_comp\n",
+    "print(f\"{len(measures)} measures x {len(pairs)} group pairs = {n_comp} comparisons; \"\n",
+    "      f\"Bonferroni alpha = {alpha:.5f}\")\n",
+    "rows = []\n",
+    "for m in measures:\n",
+    "    for g1, g2 in pairs:\n",
+    "        a = df_fairness.loc[df_fairness.majority_group == g1, m].dropna()\n",
+    "        b = df_fairness.loc[df_fairness.majority_group == g2, m].dropna()\n",
+    "        if len(a) > 1 and len(b) > 1:\n",
+    "            p = stats.ks_2samp(a, b).pvalue\n",
+    "            rows.append((m, g1, g2, len(a), len(b), p, p < alpha))\n",
+    "ks_res = pd.DataFrame(rows, columns=['measure', 'group1', 'group2', 'n1', 'n2', 'p_value', 'significant'])\n",
+    "display(ks_res.sort_values('p_value'))\n",
+    "print(\"Measures with at least one significant pair:\")\n",
+    "print(ks_res.groupby('measure')['significant'].any())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "69c128f6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 3. Missingness\n",
+    "miss = df_fairness[measures].isna().mean().sort_values(ascending=False)\n",
+    "display(miss.to_frame('fraction_missing'))\n",
+    "top_miss = miss.index[0]\n",
+    "print(\"Highest-missingness measure:\", top_miss, f\"({miss.iloc[0]:.1%})\")\n",
+    "\n",
+    "# 4. Little's-style check: logistic regression of missingness on observed variables\n",
+    "df_fairness['is_missing'] = df_fairness[top_miss].isna().astype(int)\n",
+    "pred = senslist + [m for m in measures if m != top_miss]\n",
+    "df_m = df_fairness.dropna(subset=pred)\n",
+    "Xm = sm.add_constant(df_m[pred].astype(float))\n",
+    "miss_model = sm.Logit(df_m['is_missing'], Xm).fit(method='bfgs', maxiter=1000, disp=False)\n",
+    "print(miss_model.summary())\n",
+    "print(df_fairness.groupby('majority_group')['is_missing'].mean())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4145382e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 5-6. Pearson correlation heatmap, all numeric variables (drop highest-missingness measure)\n",
+    "num_cols = senslist + [m for m in measures if m != top_miss]\n",
+    "df_num = df_fairness[num_cols].dropna()\n",
+    "print(\"Rows kept:\", len(df_num))\n",
+    "corr = df_num.corr(method='pearson')\n",
+    "plt.figure(figsize=(10, 8))\n",
+    "sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', center=0, linewidths=0.5)\n",
+    "plt.title('Pearson Correlation Heatmap'); plt.show()\n",
+    "\n",
+    "# Strongest relationship between each measure and the sensitive attributes\n",
+    "meas_only = [m for m in num_cols if m not in senslist]\n",
+    "sens_corr = corr.loc[meas_only, senslist]\n",
+    "display(sens_corr.round(2))\n",
+    "best = sens_corr.abs().stack().sort_values(ascending=False)\n",
+    "(m_best, s_best) = best.index[0]\n",
+    "print(f\"Strongest: {m_best} vs {s_best}, r = {corr.loc[m_best, s_best]:.3f}\")\n",
+    "no_outcome = sens_corr.drop(index='ViolentCrimesPerPop').abs().stack().sort_values(ascending=False)\n",
+    "(m2, s2) = no_outcome.index[0]\n",
+    "print(f\"Strongest excluding the outcome: {m2} vs {s2}, r = {corr.loc[m2, s2]:.3f}\")\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2076691d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 7. OLS: ViolentCrimesPerPop on numeric variables (no majority_group, no PolicPerPop)\n",
+    "reg_cols = senslist + [m for m in measures if m not in (top_miss, 'ViolentCrimesPerPop')]\n",
+    "df_reg = df_fairness[reg_cols + ['ViolentCrimesPerPop']].dropna()\n",
+    "X = sm.add_constant(df_reg[reg_cols])\n",
+    "ols = sm.OLS(df_reg['ViolentCrimesPerPop'], X).fit()\n",
+    "print(ols.summary())\n",
+    "display(ols.summary2().tables[1].loc[senslist, ['Coef.', 'P>|t|']].round(4))\n",
+    "\n",
+    "# Multicollinearity check: the four race shares overlap heavily\n",
+    "from statsmodels.stats.outliers_influence import variance_inflation_factor\n",
+    "vif = pd.Series([variance_inflation_factor(X.values, i) for i in range(1, X.shape[1])], index=reg_cols)\n",
+    "display(vif.round(1).to_frame('VIF'))\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "30f55624",
+   "metadata": {},
+   "source": [
+    "#### Q1 (20 points): What is the sensitive attribute in this dataset?\n",
+    "__Answer:__\n",
+    "\n",
+    "The sensitive attribute is **race**, represented by the community racial composition variables `racepctblack`, `racePctWhite`, `racePctAsian` and `racePctHisp`. I summarize it with the categorical `majority_group` (White 1,572 communities; Black 219; Hispanic 115; Asian 88). `state` and `county` are geographic variables that could act as proxies, but they are not the sensitive attribute."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "636a393b",
+   "metadata": {},
+   "source": [
+    "#### Q2 (20 points): From your stratified distribution analysis, which variables have a statistically significant difference by sensitive attribute?\n",
+    "__Answer:__\n",
+    "\n",
+    "With 4 majority groups there are 6 pairs, and 7 measures, so 42 comparisons and a Bonferroni threshold of 0.05 / 42 = **0.00119**. Using pairwise two-sample K-S tests, **all seven measures** differ significantly for at least one pair of groups: `medIncome`, `MedRent`, `PctUnemployed`, `PctNotHSGrad`, `PctForeignBorn`, `PolicPerPop` and `ViolentCrimesPerPop`. The largest differences are `PctForeignBorn` (Asian vs White, p = 1.9e-80) and `ViolentCrimesPerPop` (White vs Black, p = 2.3e-73). The pairs that are *not* significant are Hispanic vs White for `MedRent` (p = 0.0055), Hispanic vs Black for `PolicPerPop` (0.0057) and `medIncome` (0.0089), Asian vs Hispanic for `PctForeignBorn` (0.0074) and `PolicPerPop` (0.028), Hispanic vs White for `PolicPerPop` (0.037), and Asian vs White for `PctNotHSGrad` (0.28) and `PctUnemployed` (0.77). `PolicPerPop` has only 25 to 184 observations per group because of missingness, so its tests have lower power."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a8ad3e1b",
+   "metadata": {},
+   "source": [
+    "#### Q3 (20 points): Which measurement variable has the highest level of missingness?\n",
+    "__Answer:__\n",
+    "\n",
+    "`PolicPerPop` (police officers per population) has the highest missingness: **84.0%** of rows (1,675 of 1,994). All other measures are complete. (`county` is also heavily missing, but it is a geographic identifier, not a measure.) The values come from the LEMAS police survey, which covered only departments with at least 100 officers plus a sample of smaller ones."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "753bcc7b",
+   "metadata": {},
+   "source": [
+    "#### Q4 (20 points): Is this variable MCAR, MAR, or MNAR?  Explain your answer.\n",
+    "__Answer:__\n",
+    "\n",
+    "**Not MCAR; most likely MAR.** I regressed a missingness indicator for `PolicPerPop` on the other observed variables (logistic regression, pseudo R-squared = 0.20, LLR p = 2.9e-70). Many coefficients are significantly different from zero: `racepctblack` (p < 0.001), `racePctWhite` (p < 0.001), `racePctHisp` (p = 0.001), `racePctAsian` (p = 0.017), `PctNotHSGrad` (p < 0.001), `PctForeignBorn` (p < 0.001), `ViolentCrimesPerPop` (p < 0.001) and `PctUnemployed` (p = 0.035). If the data were MCAR, none of these would predict missingness. The missing rate also varies by majority group: White 88.3%, Hispanic 77.4%, Asian 71.6%, Black 61.6%. So missingness is associated with the sensitive attribute and with other observed variables, which is the definition of MAR. We cannot rule out MNAR, because missingness could also depend on the unobserved police staffing level itself, but the data cannot test that."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3d5437df",
+   "metadata": {},
+   "source": [
+    "#### Q5 (20 points): To look for correlations or associations within one heatmap, all variables must be numerical (correlation) or all must be categorical (association).  Because we have numerical values for the percentages of racial groups in each neighborhood (e.g. racepctblack), we can use those instead of majority_group with our measures to create a set of only numerical variables.  What statistic do we use in this case to generate our heatmap?\n",
+    "__Answer:__\n",
+    "\n",
+    "**Pearson's correlation coefficient** (r, from -1 to +1). All the variables are continuous numeric values, so Pearson's r is appropriate. Cramer's V is for categorical-categorical association and would apply only if we used `majority_group` with other categorical variables."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "7fb12ba5",
+   "metadata": {},
+   "source": [
+    "#### Q6 (20 points): Produce a heatmap with all numerical variables.  Drop the highest missingness measurement variable so you can keep most of your rows.  What measures are related to your sensitive attribute(s)?  Which one has the greatest degree of correlation or association to a sensitive attribute?  What is the value of its correlation or association and to what sensitive attribute is it related?\n",
+    "__Answer:__\n",
+    "\n",
+    "After dropping `PolicPerPop`, 1,994 rows remain. Every measure is related to at least one racial-composition variable. For example, `PctUnemployed` (r = -0.52 with `racePctWhite`, +0.43 with `racePctHisp`), `PctNotHSGrad` (-0.49 with `racePctWhite`, +0.46 with `racePctHisp`), `MedRent` (+0.51 with `racePctAsian`), `medIncome` (-0.36 with `racepctblack`, +0.36 with `racePctAsian`), and `PctForeignBorn` (+0.66 with `racePctAsian`, +0.68 with `racePctHisp`). The **greatest correlation is `ViolentCrimesPerPop` with `racePctWhite`, r = -0.685**: communities with a larger White share have lower violent crime per population. `ViolentCrimesPerPop` is also strongly correlated with `racepctblack` (r = +0.63). Among the non-outcome measures the strongest is `PctForeignBorn` with `racePctHisp` (r = +0.684, essentially tied). These strongly correlated variables could act as proxies for race."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "7832aa8a",
+   "metadata": {},
+   "source": [
+    "#### Q7 (20 points): Consider violent crimes per population as the target variable. Is there a conditional outcome difference based upon the sensitive attribute(s)? Explain how you know if there is or is not.  To answer this question, perform a regression using only numeric variables.  Don't use majority_group -- you can simplify the regression by avoiding one-hot encoding by sticking with numeric variables.  Also, exclude the measure with the highest missingness -- OLS regression cannot handle missing values.\n",
+    "__Answer:__\n",
+    "\n",
+    "**Yes, there is a conditional outcome difference.** In the OLS regression of `ViolentCrimesPerPop` on all numeric variables except `PolicPerPop` (n = 1,994, R-squared = 0.559), the coefficients for two sensitive attributes remain statistically significant after controlling for income, rent, unemployment, education and foreign-born share: `racepctblack` (coef = +0.467, p < 0.001) and `racePctHisp` (coef = +0.146, p < 0.001). `racePctWhite` (coef = -0.050, p = 0.38) and `racePctAsian` (coef = +0.024, p = 0.44) are not significant. I know there is a difference because a significant coefficient means that, with the other variables held fixed, communities with a higher Black or Hispanic share have higher predicted violent crime per population, so the other measures do not fully explain the race gap. Cautions: the race shares are collinear (VIF about 12 for `racepctblack` and 16 for `racePctWhite`), so the `racePctWhite` coefficient is hard to interpret on its own, and this is association, not causation, because crime rates also reflect reporting and policing patterns."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "aai4323_hw4",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.11"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
